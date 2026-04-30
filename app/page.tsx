@@ -1,53 +1,26 @@
 // @ts-nocheck
 'use client';
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import Papa from 'papaparse';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 export default function LotteryDashboard() {
-  // 1. State สำหรับเก็บข้อมูลแกนหลัก (lineId -> เวลาโปรด)
-  const [baseTimeData, setBaseTimeData] = useState({}); 
-  const [isBaseUploaded, setIsBaseUploaded] = useState(false);
+  // State จัดการหน้าต่าง (Tab)
+  const [activeTab, setActiveTab] = useState('upload'); // 'upload' | 'dashboard'
 
-  // 2. State สำหรับเก็บข้อมูลแกนอื่นๆ ที่จับคู่และนับจำนวนแล้ว
-  const [datasets, setDatasets] = useState({});
+  // State เก็บข้อมูลทุกแกนที่อัปโหลดมา รูปแบบ: { "RFM": { uid1: "VIP", uid2: "New" }, "Time": { uid1: "08:00" } }
+  const [dimensions, setDimensions] = useState({});
   const [uploadName, setUploadName] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
-  const [activeDimension, setActiveDimension] = useState('');
 
-  // 🔴 ฟังก์ชันที่ 1: อัปโหลดไฟล์ "เวลาโปรด" (Base)
-  const handleBaseUpload = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+  // State สำหรับหน้า Dashboard
+  const [axisX, setAxisX] = useState('');
+  const [axisY, setAxisY] = useState('');
 
-    Papa.parse(file, {
-      header: true,
-      skipEmptyLines: true,
-      complete: function (results) {
-        const timeMap = {};
-        // สมมติไฟล์ชื่อคอลัมน์คือ lineId และ time
-        results.data.forEach(row => {
-          const uid = row['lineId'] || row['UID'];
-          const time = row['เวลาโปรด'] || row['time'];
-          if (uid && time) {
-            timeMap[uid] = time;
-          }
-        });
-        setBaseTimeData(timeMap);
-        setIsBaseUploaded(true);
-        alert(`โหลดแกนเวลาสำเร็จ! พบข้อมูล ${Object.keys(timeMap).length} คน`);
-      }
-    });
-  };
-
-  // 🔵 ฟังก์ชันที่ 2: อัปโหลดไฟล์ "แกนเสริม" และทำการ JOIN สดๆ
-  const handleDimensionUpload = () => {
-    if (!isBaseUploaded) {
-      alert('ต้องอัปโหลด "ไฟล์เวลาโปรด (Base)" ก่อนนะเพื่อน!');
-      return;
-    }
+  // 🔴 ฟังก์ชันอัปโหลดไฟล์ (ทำงานแบบ Universal แกนไหนก็รับได้)
+  const handleUpload = () => {
     if (!selectedFile || !uploadName) {
-      alert('กรุณาเลือกไฟล์และตั้งชื่อแกนก่อน!');
+      alert('ใส่ชื่อแกนและเลือกไฟล์ก่อนนะเพื่อน!');
       return;
     }
 
@@ -56,119 +29,224 @@ export default function LotteryDashboard() {
       skipEmptyLines: true,
       complete: function (results) {
         const rawData = results.data;
-        const aggregated = {};
-        const categories = new Set();
+        const dataMap = {};
 
         rawData.forEach(row => {
           const keys = Object.keys(row);
           // หาคอลัมน์ที่เป็น lineId
-          const uidKey = keys.find(k => k.toLowerCase().includes('lineid') || k === 'UID');
-          // คอลัมน์ที่เหลือให้ถือว่าเป็น Category (เช่น Segment, set_size)
-          const categoryKey = keys.find(k => k !== uidKey);
+          const uidKey = keys.find(k => k.toLowerCase().includes('lineid') || k.toLowerCase() === 'uid');
+          // คอลัมน์ที่เหลือให้ถือว่าเป็น Value
+          const valKey = keys.find(k => k !== uidKey);
 
-          const uid = row[uidKey];
-          const category = row[categoryKey] || 'ไม่ระบุ';
-
-          // 💡 ทำการ JOIN: เอา UID ไปหาเวลาโปรดจาก Base Data
-          const userTime = baseTimeData[uid];
-
-          // ถ้าหาเจอ (แปลว่าคนนี้มีข้อมูลทั้งเวลาและแกนนี้) ให้นับเข้ากลุ่ม
-          if (userTime) {
-            if (!aggregated[userTime]) aggregated[userTime] = { time: userTime };
-            aggregated[userTime][category] = (aggregated[userTime][category] || 0) + 1;
-            categories.add(category);
+          if (uidKey && valKey && row[uidKey] && row[valKey]) {
+            dataMap[row[uidKey]] = row[valKey];
           }
         });
 
-        const chartData = {
-          data: Object.values(aggregated).sort((a, b) => a.time.localeCompare(b.time)),
-          categories: Array.from(categories)
-        };
-
-        setDatasets(prev => ({ ...prev, [uploadName]: chartData }));
-        if (!activeDimension) setActiveDimension(uploadName);
+        const newDimensions = { ...dimensions, [uploadName]: dataMap };
+        setDimensions(newDimensions);
         
+        // ถ้าอัปโหลดครบ 2 อันแล้วตั้งค่า Default ให้ Dashboard อัตโนมัติ
+        const dimNames = Object.keys(newDimensions);
+        if (dimNames.length === 1) setAxisX(dimNames[0]);
+        if (dimNames.length === 2) setAxisY(dimNames[1]);
+
         setUploadName('');
         setSelectedFile(null);
+        alert(`อัปโหลดแกน "${uploadName}" สำเร็จ! (พบข้อมูล ${Object.keys(dataMap).length} คน)`);
       }
     });
   };
 
-  const colors = ['#8884d8', '#82ca9d', '#ffc658', '#ff7300', '#0088FE', '#00C49F', '#E056FD', '#FF4757'];
-  const activeData = datasets[activeDimension];
+  // 🔵 ฟังก์ชันคำนวณ Matrix สดๆ เมื่อเลือกแกน X และ Y
+  const chartDataObj = useMemo(() => {
+    if (!axisX || !axisY || axisX === axisY) return null;
+
+    const dataX = dimensions[axisX];
+    const dataY = dimensions[axisY];
+    const matrix = {};
+    const yCategories = new Set();
+
+    // หา UID ทั้งหมดที่มีในทั้งสองแกน
+    const allUids = new Set([...Object.keys(dataX), ...Object.keys(dataY)]);
+
+    allUids.forEach(uid => {
+      const valX = dataX[uid];
+      const valY = dataY[uid];
+      
+      // นับเฉพาะคนที่มีข้อมูลทั้ง 2 แกน
+      if (valX && valY) {
+        if (!matrix[valX]) matrix[valX] = { name: valX };
+        matrix[valX][valY] = (matrix[valX][valY] || 0) + 1;
+        yCategories.add(valY);
+      }
+    });
+
+    const categoriesArray = Array.from(yCategories).sort();
+    const formattedData = Object.values(matrix).sort((a, b) => a.name.localeCompare(b.name));
+
+    return { data: formattedData, categories: categoriesArray };
+  }, [axisX, axisY, dimensions]);
+
+  const colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#14B8A6', '#F97316'];
 
   return (
-    <div className="p-8 max-w-7xl mx-auto bg-gray-50 min-h-screen font-sans">
-      <h1 className="text-3xl font-bold mb-8 text-gray-800">📊 Interactive Behavior Dashboard</h1>
-
-      {/* โซนที่ 1: อัปโหลดแกนเวลา (ตั้งต้น) */}
-      <div className="bg-blue-100 p-6 rounded-lg shadow mb-6 border border-blue-200">
-        <h2 className="text-lg font-bold text-blue-900 mb-2">1. อัปโหลดแกนหลัก (เวลาโปรด)</h2>
-        <p className="text-sm text-blue-700 mb-4">ไฟล์ต้องมีคอลัมน์: <b>lineId</b>, <b>เวลาโปรด</b></p>
-        <input 
-          type="file" accept=".csv"
-          className="block w-full text-sm text-gray-900 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-          onChange={handleBaseUpload}
-        />
-        {isBaseUploaded && <p className="text-green-600 font-bold mt-2">✅ โหลดข้อมูลแกนเวลาสำเร็จแล้ว!</p>}
-      </div>
-
-      {/* โซนที่ 2: อัปโหลดมิติอื่นๆ (อัปโหลดกี่อันก็ได้) */}
-      <div className={`bg-white p-6 rounded-lg shadow mb-8 flex gap-4 items-end transition-opacity ${!isBaseUploaded ? 'opacity-50 pointer-events-none' : ''}`}>
-        <div className="flex-1">
-          <label className="block text-sm font-medium text-gray-700 mb-2">2. ตั้งชื่อแกนเปรียบเทียบ (เช่น RFM, ขนาดชุด)</label>
-          <input 
-            type="text" className="w-full border p-2 rounded" placeholder="พิมพ์ชื่อแกน..."
-            value={uploadName} onChange={(e) => setUploadName(e.target.value)}
-          />
+    <div className="min-h-screen bg-gray-100 font-sans text-gray-800">
+      {/* 🚀 Navigation Bar */}
+      <nav className="bg-slate-900 text-white p-4 shadow-md flex justify-between items-center px-8">
+        <h1 className="text-2xl font-bold tracking-wider">🎯 MICRO-SEGMENT DASHBOARD</h1>
+        <div className="flex gap-4">
+          <button 
+            className={`px-4 py-2 rounded font-bold transition ${activeTab === 'upload' ? 'bg-blue-600' : 'hover:bg-slate-700'}`}
+            onClick={() => setActiveTab('upload')}
+          >
+            📂 อัปโหลดข้อมูล
+          </button>
+          <button 
+            className={`px-4 py-2 rounded font-bold transition ${activeTab === 'dashboard' ? 'bg-blue-600' : 'hover:bg-slate-700'}`}
+            onClick={() => setActiveTab('dashboard')}
+          >
+            📊 นำเสนอ (Dashboard)
+          </button>
         </div>
-        <div className="flex-1">
-          <label className="block text-sm font-medium text-gray-700 mb-2">ไฟล์ CSV (ต้องมี: lineId, ค่าของแกน)</label>
-          <input 
-            type="file" accept=".csv" className="w-full border p-2 rounded" 
-            onChange={(e) => setSelectedFile(e.target.files[0])}
-          />
-        </div>
-        <button 
-          onClick={handleDimensionUpload}
-          className="bg-gray-800 text-white px-6 py-2 rounded font-bold hover:bg-gray-900 transition"
-        >
-          จับคู่ข้อมูล +
-        </button>
-      </div>
+      </nav>
 
-      {/* โซนที่ 3: แดชบอร์ดแสดงผล */}
-      {Object.keys(datasets).length > 0 && (
-        <div className="bg-white p-6 rounded-lg shadow border-t-4 border-gray-800">
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-xl font-bold text-gray-800">เปรียบเทียบ เวลาโปรด vs :</h2>
-            <select 
-              className="border-2 border-gray-300 p-2 rounded bg-gray-50 font-bold text-gray-700 focus:outline-none"
-              value={activeDimension}
-              onChange={(e) => setActiveDimension(e.target.value)}
-            >
-              {Object.keys(datasets).map((name) => (
-                <option key={name} value={name}>{name}</option>
+      <main className="p-8 max-w-[1600px] mx-auto">
+        {/* =========================================
+            탭 1: UPLOAD DATA
+            ========================================= */}
+        {activeTab === 'upload' && (
+          <div className="space-y-6">
+            <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-200">
+              <h2 className="text-xl font-bold mb-6 text-gray-800">1. เพิ่มแกนข้อมูลใหม่ (Data Dimensions)</h2>
+              <div className="flex gap-4 items-end">
+                <div className="flex-1">
+                  <label className="block text-sm font-bold text-gray-600 mb-2">ตั้งชื่อแกน (เช่น กลุ่มอายุ, RFM, เวลาโปรด)</label>
+                  <input 
+                    type="text" className="w-full border-2 border-gray-300 p-3 rounded-lg focus:border-blue-500 focus:outline-none" 
+                    placeholder="พิมพ์ชื่อแกน..." value={uploadName} onChange={(e) => setUploadName(e.target.value)}
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="block text-sm font-bold text-gray-600 mb-2">เลือกไฟล์ CSV (ต้องมี: lineId, ค่าของแกน)</label>
+                  <input 
+                    type="file" accept=".csv" className="w-full border-2 border-gray-300 p-2 rounded-lg bg-gray-50" 
+                    onChange={(e) => setSelectedFile(e.target.files[0])}
+                  />
+                </div>
+                <button 
+                  onClick={handleUpload}
+                  className="bg-slate-900 text-white px-8 py-3 rounded-lg font-bold hover:bg-blue-600 transition shadow-lg"
+                >
+                  บันทึกข้อมูล +
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-4 gap-4">
+              {Object.keys(dimensions).map((dim, idx) => (
+                <div key={idx} className="bg-green-50 border-l-4 border-green-500 p-4 rounded shadow-sm flex justify-between items-center">
+                  <div>
+                    <p className="text-xs text-green-600 font-bold uppercase tracking-wider">แกนที่พร้อมใช้งาน</p>
+                    <p className="text-lg font-bold text-gray-800">{dim}</p>
+                  </div>
+                  <span className="bg-green-200 text-green-800 text-xs px-2 py-1 rounded-full font-bold">
+                    {Object.keys(dimensions[dim]).length.toLocaleString()} UIDs
+                  </span>
+                </div>
               ))}
-            </select>
+              {Object.keys(dimensions).length === 0 && (
+                <div className="col-span-4 p-8 text-center border-2 border-dashed border-gray-300 rounded-xl text-gray-500">
+                  ยังไม่มีข้อมูลแกนใดๆ กรุณาอัปโหลดไฟล์ด้านบน
+                </div>
+              )}
+            </div>
           </div>
+        )}
 
-          <div className="h-[500px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={activeData?.data} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                <XAxis dataKey="time" tick={{fontSize: 12}} />
-                <YAxis />
-                <Tooltip contentStyle={{ borderRadius: '8px', fontWeight: 'bold' }} />
-                <Legend wrapperStyle={{ paddingTop: '20px' }} />
-                {activeData?.categories.map((cat, index) => (
-                  <Bar key={cat} dataKey={cat} stackId="a" fill={colors[index % colors.length]} radius={[4, 4, 0, 0]} />
-                ))}
-              </BarChart>
-            </ResponsiveContainer>
+        {/* =========================================
+            탭 2: PRESENTATION DASHBOARD
+            ========================================= */}
+        {activeTab === 'dashboard' && (
+          <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-8 min-h-[700px]">
+            {/* โซนเลือกแกน */}
+            <div className="flex gap-8 items-center bg-slate-50 p-6 rounded-xl border border-gray-200 mb-8">
+              <div className="flex-1">
+                <label className="block text-sm font-bold text-gray-500 uppercase tracking-widest mb-2">แกนหลักแนวนอน (X-Axis)</label>
+                <select 
+                  className="w-full border-2 border-slate-300 p-3 rounded-lg bg-white font-bold text-lg focus:border-blue-500 outline-none"
+                  value={axisX} onChange={(e) => setAxisX(e.target.value)}
+                >
+                  <option value="" disabled>-- เลือกแกน X --</option>
+                  {Object.keys(dimensions).map(name => <option key={name} value={name}>{name}</option>)}
+                </select>
+              </div>
+              <div className="text-3xl font-bold text-slate-300 mt-6">VS</div>
+              <div className="flex-1">
+                <label className="block text-sm font-bold text-gray-500 uppercase tracking-widest mb-2">แกนเปรียบเทียบ (Y-Axis / สี)</label>
+                <select 
+                  className="w-full border-2 border-slate-300 p-3 rounded-lg bg-white font-bold text-lg focus:border-blue-500 outline-none"
+                  value={axisY} onChange={(e) => setAxisY(e.target.value)}
+                >
+                  <option value="" disabled>-- เลือกแกน Y --</option>
+                  {Object.keys(dimensions).map(name => <option key={name} value={name}>{name}</option>)}
+                </select>
+              </div>
+            </div>
+
+            {/* โซนแสดงผล */}
+            {!chartDataObj ? (
+              <div className="flex items-center justify-center h-[400px] text-gray-400 font-bold text-xl border-2 border-dashed rounded-xl">
+                กรุณาเลือกแกน X และแกน Y ให้แตกต่างกันเพื่อดู Matrix
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-8">
+                {/* กราฟ */}
+                <div className="h-[500px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartDataObj.data} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
+                      <CartesianGrid strokeDasharray="3 3" opacity={0.4} />
+                      <XAxis dataKey="name" tick={{fontSize: 14, fontWeight: 'bold'}} tickMargin={10} />
+                      <YAxis tick={{fontSize: 14}} />
+                      <Tooltip contentStyle={{ borderRadius: '12px', fontWeight: 'bold', boxShadow: '0 10px 25px rgba(0,0,0,0.1)' }} />
+                      <Legend wrapperStyle={{ paddingTop: '20px', fontSize: '14px', fontWeight: 'bold' }} />
+                      {chartDataObj.categories.map((cat, index) => (
+                        <Bar key={cat} dataKey={cat} stackId="a" fill={colors[index % colors.length]} radius={[4, 4, 0, 0]} />
+                      ))}
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+
+                {/* ตาราง Data Matrix */}
+                <div className="overflow-x-auto border rounded-lg shadow-sm">
+                  <table className="w-full text-left text-sm text-gray-600">
+                    <thead className="bg-slate-900 text-white uppercase font-bold">
+                      <tr>
+                        <th className="p-4 border-r border-slate-700">{axisX} \ {axisY}</th>
+                        {chartDataObj.categories.map(cat => (
+                          <th key={cat} className="p-4 text-center">{cat}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {chartDataObj.data.map((row, i) => (
+                        <tr key={i} className="border-b hover:bg-slate-50 transition">
+                          <td className="p-4 font-bold border-r bg-slate-100">{row.name}</td>
+                          {chartDataObj.categories.map(cat => (
+                            <td key={cat} className="p-4 text-center text-lg font-medium">
+                              {row[cat] ? row[cat].toLocaleString() : '-'}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
-        </div>
-      )}
+        )}
+      </main>
     </div>
   );
 }
